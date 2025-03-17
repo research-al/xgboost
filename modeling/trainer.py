@@ -50,7 +50,7 @@ class ModelTrainer:
         if self.model_type == 'xgboost':
             self.model = XGBoostModel(self.config)
         elif self.model_type in ['neural_network', 'nn']:
-            self.model = NeuralNetworkModel(self.config)
+            self.model = NeuralNetTrainer(self.config)
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
@@ -173,6 +173,8 @@ class ModelTrainer:
         
         # Initialize model
         self._initialize_model()
+        self.initial_model = self.model
+
         
         # Train model
         start_time = time.time()

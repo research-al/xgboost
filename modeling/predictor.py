@@ -20,15 +20,16 @@ class Predictor:
     on new protein-compound pairs.
     """
     
-    def __init__(self, config: KIBAConfig):
+    def __init__(self, config: KIBAConfig, model_type: str = None):
         """Initialize with configuration.
         
         Args:
             config: KIBAConfig object with paths and settings
+            model_type: Type of model ('xgboost', 'neural_network', etc.)
         """
         self.config = config
         self.model = None
-        self.model_type = getattr(config, 'model_type', 'xgboost')
+        self.model_type = model_type if model_type else getattr(config, 'model_type', 'xgboost')
         self.device = torch.device("cuda" if torch.cuda.is_available() and config.gpu_enabled else "cpu")
         self.protein_embeddings = None
         self.protein_ids = None

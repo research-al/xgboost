@@ -96,19 +96,7 @@ class ModelFactory:
     
     @staticmethod
     def create_model(model_type: str, config: Any = None, **kwargs) -> BaseModel:
-        """Create and return a model instance of the specified type.
-        
-        Args:
-            model_type: Type of model to create (e.g., 'xgboost', 'neural_network')
-            config: Configuration object
-            **kwargs: Additional model-specific parameters
-            
-        Returns:
-            Instance of a BaseModel subclass
-            
-        Raises:
-            ValueError: If model_type is not recognized
-        """
+        """Create and return a model instance of the specified type."""
         from kiba_model.modeling.models.xgboost_model import XGBoostModel
         from kiba_model.modeling.models.neural_network_model import NeuralNetworkModel
         

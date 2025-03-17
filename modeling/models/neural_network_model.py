@@ -1,4 +1,4 @@
-"""Neural network model for KIBA prediction."""
+"""Neural network model implementation for KIBA prediction."""
 
 import os
 import time
@@ -11,6 +11,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import mean_squared_error, r2_score
 import pickle
 from typing import Dict, Tuple, List, Optional, Union, Any
+
+from kiba_model.modeling.models.base import BaseModel
+from kiba_model.config import KIBAConfig
 
 logger = logging.getLogger("kiba_model")
 
@@ -202,175 +205,6 @@ class NeuralNetTrainer:
         
         return self.history
     
-    def tune_hyperparameters(self, X_train: np.ndarray, y_train: np.ndarray, 
-                            X_val: np.ndarray, y_val: np.ndarray) -> Dict[str, Any]:
-        """Tune hyperparameters for neural network model.
-        
-        Args:
-            X_train: Training features
-            y_train: Training targets
-            X_val: Validation features
-            y_val: Validation targets
-            
-        Returns:
-            Dictionary with best parameters
-        """
-        logger.info("Tuning neural network hyperparameters...")
-        
-        # Define parameter grid
-        param_grid = {
-            'learning_rate': [0.001, 0.0005],
-            'batch_size': [16, 32],
-            'dropout': [0.2, 0.3]
-        }
-        
-        best_val_loss = float('inf')
-        best_params = None
-        
-        # Try different parameter combinations
-        for lr in param_grid['learning_rate']:
-            for batch_size in param_grid['batch_size']:
-                for dropout in param_grid['dropout']:
-                    logger.info(f"Testing: learning_rate={lr}, batch_size={batch_size}, dropout={dropout}")
-                    
-                    # Initialize model
-                    input_dim = X_train.shape[1]
-                    self.model = KIBANeuralNetwork(input_dim, dropout=dropout).to(self.device)
-                    
-                    # Train model
-                    history = self.train(X_train, y_train, X_val, y_val, 
-                                         epochs=50, batch_size=batch_size, learning_rate=lr)
-                    
-                    # Get best validation loss
-                    val_loss = min(history['val_loss'])
-                    
-                    logger.info(f"  Validation loss: {val_loss:.6f}")
-                    
-                    # Update best parameters
-                    if val_loss < best_val_loss:
-                        best_val_loss = val_loss
-                        best_params = {
-                            'learning_rate': lr,
-                            'batch_size': batch_size,
-                            'dropout': dropout,
-                            'val_loss': val_loss
-                        }
-        
-        logger.info(f"Best parameters: {best_params}")
-        return best_params
-    
-    def train_final_model(self, X_train: np.ndarray, y_train: np.ndarray, 
-                          X_val: np.ndarray, y_val: np.ndarray,
-                          best_params: Dict[str, Any], epochs: int = 200) -> nn.Module:
-        """Train final model with best parameters.
-        
-        Args:
-            X_train: Training features
-            y_train: Training targets
-            X_val: Validation features
-            y_val: Validation targets
-            best_params: Best hyperparameters
-            epochs: Number of training epochs
-            
-        Returns:
-            Trained neural network model
-        """
-        logger.info("Training final neural network model with best parameters...")
-        
-        # Combine train and validation data
-        X_train_full = np.vstack([X_train, X_val])
-        y_train_full = np.concatenate([y_train, y_val])
-        
-        # Convert data to tensors
-        X_train_tensor = self._to_tensor(X_train_full)
-        y_train_tensor = self._to_tensor(y_train_full)
-        
-        # Create dataset and dataloader
-        train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-        train_loader = DataLoader(
-            train_dataset, 
-            batch_size=best_params['batch_size'], 
-            shuffle=True
-        )
-        
-        # Initialize model with best parameters
-        input_dim = X_train_full.shape[1]
-        self.model = KIBANeuralNetwork(input_dim, dropout=best_params['dropout']).to(self.device)
-        
-        # Loss function and optimizer
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(self.model.parameters(), lr=best_params['learning_rate'])
-        
-        # Training loop
-        logger.info(f"Training final model for {epochs} epochs with best parameters")
-        start_time = time.time()
-        
-        for epoch in range(epochs):
-            self.model.train()
-            total_loss = 0.0
-            
-            for inputs, targets in train_loader:
-                # Forward pass
-                outputs = self.model(inputs)
-                loss = criterion(outputs, targets)
-                
-                # Backward pass and optimize
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-                total_loss += loss.item()
-            
-            # Log progress every 20 epochs
-            if (epoch + 1) % 20 == 0:
-                avg_loss = total_loss / len(train_loader)
-                logger.info(f"Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.6f}")
-        
-        training_time = time.time() - start_time
-        logger.info(f"Final model trained in {training_time:.2f}s")
-        
-        return self.model
-    
-    def save_model(self, model_path: str) -> None:
-        """Save model to file.
-        
-        Args:
-            model_path: Path to save model
-        """
-        if self.model is None:
-            logger.error("Cannot save model: no model has been trained")
-            return
-            
-        try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(model_path), exist_ok=True)
-            
-            # Save model state dict
-            torch.save(self.model.state_dict(), model_path)
-            logger.info(f"Model saved to {model_path}")
-        except Exception as e:
-            logger.error(f"Error saving model: {str(e)}")
-    
-    def load_model(self, model_path: str, input_dim: int) -> None:
-        """Load model from file.
-        
-        Args:
-            model_path: Path to model file
-            input_dim: Input dimension for model
-        """
-        try:
-            # Initialize model
-            self.model = KIBANeuralNetwork(input_dim).to(self.device)
-            
-            # Load model state dict
-            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-            self.model.eval()
-            
-            logger.info(f"Model loaded from {model_path}")
-        except Exception as e:
-            logger.error(f"Error loading model: {str(e)}")
-            self.model = None
-    
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Make predictions with model.
         
@@ -393,3 +227,190 @@ class NeuralNetTrainer:
             predictions = self.model(X_tensor).cpu().numpy()
             
         return predictions
+
+
+# Add the BaseModel implementation for neural networks
+class NeuralNetworkModel(BaseModel):
+    """Neural network implementation for KIBA prediction."""
+    
+    def __init__(self, config: KIBAConfig, **kwargs):
+        """Initialize the neural network model.
+        
+        Args:
+            config: KIBAConfig object with model parameters
+            **kwargs: Additional model-specific parameters
+        """
+        self.config = config
+        self.model = None
+        self.trainer = NeuralNetTrainer(config)
+        self.device = torch.device("cuda" if torch.cuda.is_available() and config.gpu_enabled else "cpu")
+        self.feature_names = kwargs.get('feature_names', None)
+        self.input_dim = kwargs.get('input_dim', None)
+        self.hidden_layers = kwargs.get('hidden_layers', [512, 256, 128, 64])
+        self.dropout_rate = kwargs.get('dropout_rate', 0.3)
+        self.learning_rate = kwargs.get('learning_rate', 0.001)
+    
+    def train(self, X_train: np.ndarray, y_train: np.ndarray, 
+              X_val: Optional[np.ndarray] = None, y_val: Optional[np.ndarray] = None,
+              **kwargs) -> nn.Module:
+        """Train the neural network model.
+        
+        Args:
+            X_train: Training feature matrix
+            y_train: Training target vector
+            X_val: Optional validation feature matrix
+            y_val: Optional validation target vector
+            **kwargs: Additional training parameters including:
+                - epochs: Number of training epochs
+                - patience: Early stopping patience
+                - verbose: Verbosity of training output
+            
+        Returns:
+            Trained neural network model
+        """
+        logger.info("Training Neural Network model...")
+        
+        # Get input dimension if not provided
+        if self.input_dim is None:
+            self.input_dim = X_train.shape[1]
+        
+        # Check that validation data is provided
+        if X_val is None or y_val is None:
+            logger.warning("Validation data not provided, using 10% of training data")
+            # Split training data into train and validation
+            from sklearn.model_selection import train_test_split
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train, y_train, test_size=0.1, random_state=self.config.random_state
+            )
+        
+        # Train model
+        history = self.trainer.train(
+            X_train, 
+            y_train, 
+            X_val, 
+            y_val,
+            epochs=kwargs.get('epochs', 100),
+            batch_size=kwargs.get('batch_size', 32),
+            learning_rate=self.learning_rate
+        )
+        
+        # Get the trained model
+        self.model = self.trainer.model
+        
+        return self.model
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Make predictions with the trained model.
+        
+        Args:
+            X: Feature matrix to predict on
+            
+        Returns:
+            Array of predictions
+        """
+        if self.model is None:
+            self.model = self.trainer.model
+            
+        if self.model is None:
+            raise ValueError("Model not trained or loaded. Call train() or load() first.")
+        
+        # Convert to tensor
+        X_tensor = torch.tensor(X, dtype=torch.float32, device=self.device)
+        
+        # Make predictions
+        with torch.no_grad():
+            self.model.eval()
+            predictions = self.model(X_tensor).cpu().numpy()
+            
+        return predictions
+    
+    def save(self, file_path: str) -> None:
+        """Save the model to disk.
+        
+        Args:
+            file_path: Path to save the model
+        """
+        if self.model is None:
+            self.model = self.trainer.model
+            
+        if self.model is None:
+            raise ValueError("No model to save. Train the model first.")
+        
+        # Make sure directory exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        # Adjust file path to use .pt extension for PyTorch models
+        file_path = str(file_path).replace('.json', '.pt')
+        
+        # Save model state dict
+        torch.save(self.model.state_dict(), file_path)
+        logger.info(f"Neural network model saved to {file_path}")
+    
+    def load(self, file_path: str) -> None:
+        """Load the model from disk.
+        
+        Args:
+            file_path: Path to load the model from
+        """
+        # Adjust file path to use .pt extension
+        file_path = str(file_path).replace('.json', '.pt')
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Model file not found: {file_path}")
+        
+        # Create model if input_dim is known
+        if self.input_dim is not None:
+            self.model = KIBANeuralNetwork(
+                self.input_dim, 
+                hidden_layers=self.hidden_layers, 
+                dropout=self.dropout_rate
+            ).to(self.device)
+            
+            # Load state dict
+            self.model.load_state_dict(torch.load(file_path, map_location=self.device))
+            self.model.eval()
+            logger.info(f"Neural network model loaded from {file_path}")
+        else:
+            logger.error("Cannot load model: input_dim is not known")
+            raise ValueError("Input dimension must be specified before loading model")
+    
+    def get_params(self) -> Dict[str, Any]:
+        """Get the model parameters.
+        
+        Returns:
+            Dictionary of model parameters
+        """
+        return {
+            'input_dim': self.input_dim,
+            'hidden_layers': self.hidden_layers,
+            'dropout_rate': self.dropout_rate,
+            'learning_rate': self.learning_rate
+        }
+    
+    def set_params(self, params: Dict[str, Any]) -> None:
+        """Set the model parameters.
+        
+        Args:
+            params: Dictionary of model parameters
+        """
+        if 'input_dim' in params:
+            self.input_dim = params['input_dim']
+        if 'hidden_layers' in params:
+            self.hidden_layers = params['hidden_layers']
+        if 'dropout_rate' in params:
+            self.dropout_rate = params['dropout_rate']
+        if 'learning_rate' in params:
+            self.learning_rate = params['learning_rate']
+    
+    def get_feature_importance(self) -> Optional[Dict[str, float]]:
+        """Get feature importances.
+        
+        Returns:
+            Dictionary mapping feature names/indices to importance values
+            
+        Note:
+            Neural networks don't have built-in feature importance like tree-based models.
+            This method returns None or could be implemented with techniques like permutation importance.
+        """
+        logger.warning("Feature importance not directly available for neural network models")
+        return None
