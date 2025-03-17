@@ -4,12 +4,12 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import xgboost as xgb
 import pickle
 from typing import Dict, Tuple, List, Optional, Union, Any
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from kiba_model.config import KIBAConfig
+from kiba_model.modeling.models.base import BaseModel
 
 logger = logging.getLogger("kiba_model")
 
@@ -30,13 +30,13 @@ class ModelEvaluator:
             'log_scale': {},
             'original_scale': {}
         }
-        
-    def evaluate_model(self, model: xgb.Booster, X_test: np.ndarray, y_test: np.ndarray, 
+    
+    def evaluate_model(self, model: BaseModel, X_test: np.ndarray, y_test: np.ndarray, 
                        strata_test: Optional[np.ndarray] = None) -> Dict[str, Dict[str, float]]:
         """Evaluate model performance on test data.
         
         Args:
-            model: Trained XGBoost model
+            model: Trained model (any BaseModel implementation)
             X_test: Test feature matrix
             y_test: Test target vector
             strata_test: Optional test strata for subgroup evaluation
@@ -46,11 +46,8 @@ class ModelEvaluator:
         """
         logger.info("Evaluating model on test set...")
         
-        # Create DMatrix for prediction
-        dtest = xgb.DMatrix(X_test)
-        
         # Make predictions
-        y_pred = model.predict(dtest)
+        y_pred = model.predict(X_test)
         
         # Convert from log scale back to original scale
         if self.config.use_log10_transform:
@@ -163,21 +160,18 @@ class ModelEvaluator:
         
         return self.metrics
     
-    def generate_visualizations(self, model: xgb.Booster, X_test: np.ndarray, y_test: np.ndarray) -> None:
+    def generate_visualizations(self, model: BaseModel, X_test: np.ndarray, y_test: np.ndarray) -> None:
         """Generate visualizations for model evaluation.
         
         Args:
-            model: Trained XGBoost model
+            model: Trained model (any BaseModel implementation)
             X_test: Test feature matrix
             y_test: Test target vector
         """
         logger.info("Generating visualizations...")
         
-        # Create DMatrix for prediction
-        dtest = xgb.DMatrix(X_test)
-        
         # Make predictions
-        y_pred = model.predict(dtest)
+        y_pred = model.predict(X_test)
         
         # Convert from log scale back to original scale
         if self.config.use_log10_transform:
@@ -204,24 +198,29 @@ class ModelEvaluator:
                     dpi=300, bbox_inches='tight')
         plt.close()
         
-        # 2. Feature importance plot
-        feature_importance = model.get_score(importance_type='gain')
+        # 2. Feature importance plot if available
+        feature_importance = model.get_feature_importance()
         if feature_importance:  # Check if there are any features with importance
-            indices = np.argsort(list(feature_importance.values()))[::-1]
-            feature_names = list(feature_importance.keys())
-            
-            plt.figure(figsize=(12, 8))
-            plt.barh(range(min(20, len(indices))), 
-                    [list(feature_importance.values())[i] for i in indices[:20]], 
-                    align='center')
-            plt.yticks(range(min(20, len(indices))), [feature_names[i] for i in indices[:20]])
-            plt.xlabel('Relative Importance')
-            plt.title('Top 20 Feature Importance')
-            plt.tight_layout()
-            plt.savefig(self.config.results_dir / 'feature_importance.png', dpi=300, bbox_inches='tight')
-            plt.close()
+            # Convert to list if it's a dictionary
+            if isinstance(feature_importance, dict):
+                feature_names = list(feature_importance.keys())
+                importance_values = list(feature_importance.values())
+                indices = np.argsort(importance_values)[::-1]  # Sort in descending order
+                
+                plt.figure(figsize=(12, 8))
+                plt.barh(range(min(20, len(indices))), 
+                        [importance_values[i] for i in indices[:20]], 
+                        align='center')
+                plt.yticks(range(min(20, len(indices))), [feature_names[i] for i in indices[:20]])
+                plt.xlabel('Relative Importance')
+                plt.title('Top 20 Feature Importance')
+                plt.tight_layout()
+                plt.savefig(self.config.results_dir / 'feature_importance.png', dpi=300, bbox_inches='tight')
+                plt.close()
+            else:
+                logger.warning("Feature importance has an unexpected format")
         else:
-            logger.warning("No feature importance available")
+            logger.warning("Feature importance not available for this model type")
         
         # 3. Distribution of predictions
         plt.figure(figsize=(12, 5))

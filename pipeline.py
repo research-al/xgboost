@@ -24,19 +24,21 @@ class KIBAModelPipeline:
     This class coordinates the entire pipeline from data loading to model evaluation.
     """
     
-    def __init__(self, config: KIBAConfig):
+    def __init__(self, config: KIBAConfig, model_type: str = 'xgboost'):
         """Initialize with configuration.
         
         Args:
             config: KIBAConfig object with settings
+            model_type: Type of model to use ('xgboost', 'neural_network', etc.)
         """
         self.config = config
+        self.model_type = model_type
         self.data_loader = DataLoader(config)
         self.data_preprocessor = DataPreprocessor(config)
         self.feature_engineering = FeatureEngineering(config)
-        self.model_trainer = ModelTrainer(config)
+        self.model_trainer = ModelTrainer(config, model_type=model_type)
         self.model_evaluator = ModelEvaluator(config)
-        self.predictor = Predictor(config)
+        self.predictor = Predictor(config, model_type=model_type)
         
         # Create backup of existing files if configured
         self.config.backup_files()
@@ -198,16 +200,17 @@ class KIBAModelPipeline:
         return self.predictor.predict_batch(protein_ids, compound_ids, is_experimental)
     
 
-    def predict_by_id(self, uniprot_id: str, pubchem_id: str) -> Optional[Dict[str, Any]]:
+    def predict_by_id(self, uniprot_id: str, pubchem_id: str, is_experimental: bool = False) -> Optional[Dict[str, Any]]:
         """
         Make a prediction by UniProt ID and PubChem ID.
         
         Args:
             uniprot_id: UniProt ID of protein
             pubchem_id: PubChem CID of compound
+            is_experimental: Whether prediction is for experimental data
             
         Returns:
             Dictionary with prediction results
         """
         self.setup_for_prediction()
-        return self.predictor.predict_by_id(uniprot_id, pubchem_id)
+        return self.predictor.predict_by_id(uniprot_id, pubchem_id, is_experimental)

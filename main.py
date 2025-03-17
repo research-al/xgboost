@@ -56,10 +56,14 @@ def main():
                         help='Minimum number of valid interactions required')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
+    parser.add_argument('--model-type', type=str, default='xgboost', 
+                      choices=['xgboost', 'neural_network', 'nn'],
+                      help='Type of model to use (default: xgboost)')
     # In kiba_model/main.py - Add to argument parser
 
     parser.add_argument('--uniprot-id', type=str, help='UniProt ID for prediction')
     parser.add_argument('--pubchem-id', type=str, help='PubChem CID for prediction')
+    parser.add_argument('--is-experimental', action='store_true', help='Flag indicating prediction is for experimental data')
     
     args = parser.parse_args()
     
@@ -95,7 +99,7 @@ def main():
     config.set_file_paths(args.kiba_file, args.protein_file, args.compound_file)
     
     # Create pipeline
-    pipeline = KIBAModelPipeline(config)
+    pipeline = KIBAModelPipeline(config, model_type=args.model_type)
     
     try:
         if args.predict_ids:
@@ -103,7 +107,7 @@ def main():
                 print("Error: Both --uniprot-id and --pubchem-id are required for ID-based prediction")
                 sys.exit(1)
                 
-            prediction = pipeline.predict_by_id(args.uniprot_id, args.pubchem_id)
+            prediction = pipeline.predict_by_id(args.uniprot_id, args.pubchem_id, args.is_experimental)
             
             if prediction:
                 print("\nPrediction results:")
@@ -131,7 +135,7 @@ def main():
                 if compound_id.lower() == 'q':
                     break
                 
-                is_exp = input("Is this experimental data? (y/n): ").lower() == 'y'
+                is_exp = args.is_experimental
                 
                 # Make prediction
                 prediction = pipeline.predict(protein_id, compound_id, is_exp)
@@ -166,7 +170,7 @@ def main():
                     pipeline.setup_for_prediction()
                     
                     # Make sample prediction
-                    prediction = pipeline.predict(protein_id, compound_id)
+                    prediction = pipeline.predict(protein_id, compound_id, args.is_experimental)
                     
                     if prediction:
                         logger.info(f"\nSample prediction for protein {protein_id} and compound {compound_id}:")

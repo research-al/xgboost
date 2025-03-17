@@ -1,0 +1,6 @@
+echo "__pycache__/" >> .gitignore
+git rm -r --cached __pycache__/
+git rm -r --cached data/__pycache__/
+git rm -r --cached features/__pycache__/
+git rm -r --cached modeling/__pycache__/
+git rm -r --cached utils/__pycache__/
