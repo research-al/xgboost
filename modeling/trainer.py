@@ -49,8 +49,10 @@ class ModelTrainer:
         """Initialize the model based on the specified model type."""
         if self.model_type == 'xgboost':
             self.model = XGBoostModel(self.config)
+            self.final_model = self.model  # Add this line
         elif self.model_type in ['neural_network', 'nn']:
             self.model = NeuralNetTrainer(self.config)
+            self.final_model = self.model  # Add this line
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
@@ -190,9 +192,9 @@ class ModelTrainer:
         elif self.model_type.lower() in ['neural_network', 'nn']:
             train_kwargs = {
                 'epochs': 100,
-                'patience': 10,
-                'verbose': 1
-            }
+                'batch_size': self.config.batch_size,
+                'learning_rate': 0.001
+                            }
         
         self.initial_model.train(
             X_train_clean, 
@@ -408,10 +410,8 @@ class ModelTrainer:
                         y_train, 
                         X_val, 
                         y_val,
-                        epochs=50,  # Reduced for tuning
-                        patience=5,
-                        verbose=0
-                    )
+                        epochs=50  # Reduced for tuning
+                                            )
                     
                     # Evaluate on validation set
                     y_pred = model.predict(X_val)
@@ -488,9 +488,8 @@ class ModelTrainer:
         elif self.model_type.lower() in ['neural_network', 'nn']:
             train_kwargs = {
                 'epochs': 100,
-                'patience': 10,
-                'verbose': 1
-            }
+                'batch_size': self.config.batch_size,
+                'learning_rate': 0.001}
         
         # Train final model
         start_time = time.time()

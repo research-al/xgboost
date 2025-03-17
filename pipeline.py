@@ -7,6 +7,8 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 from typing import Dict, Tuple, List, Optional, Union, Any
+import torch
+
 
 from kiba_model.config import KIBAConfig
 from kiba_model.data.loader import DataLoader
@@ -24,7 +26,7 @@ class KIBAModelPipeline:
     This class coordinates the entire pipeline from data loading to model evaluation.
     """
     
-    def __init__(self, config: KIBAConfig, model_type: str = 'xgboost'):
+    def __init__(self, config: KIBAConfig, model_type: str = None):
         """Initialize with configuration.
         
         Args:
@@ -32,13 +34,14 @@ class KIBAModelPipeline:
             model_type: Type of model to use ('xgboost', 'neural_network', etc.)
         """
         self.config = config
-        self.model_type = model_type
+        # Use model_type from config if not explicitly provided
+        self.model_type = model_type if model_type is not None else getattr(config, 'model_type', 'xgboost')
         self.data_loader = DataLoader(config)
         self.data_preprocessor = DataPreprocessor(config)
         self.feature_engineering = FeatureEngineering(config)
-        self.model_trainer = ModelTrainer(config, model_type=model_type)
+        self.model_trainer = ModelTrainer(config, model_type=self.model_type)
         self.model_evaluator = ModelEvaluator(config)
-        self.predictor = Predictor(config, model_type=model_type)
+        self.predictor = Predictor(config, model_type=self.model_type)
         
         # Create backup of existing files if configured
         self.config.backup_files()
@@ -88,7 +91,7 @@ class KIBAModelPipeline:
         return X, y, strata_array
     
     def run_modeling_pipeline(self, X: np.ndarray, y: np.ndarray, 
-                             strata_array: Optional[np.ndarray] = None) -> xgb.Booster:
+                         strata_array: Optional[np.ndarray] = None) -> Union[xgb.Booster, torch.nn.Module]:
         """Run the modeling pipeline to train and evaluate models.
         
         Args:
@@ -132,7 +135,7 @@ class KIBAModelPipeline:
         
         return final_model
     
-    def run_full_pipeline(self) -> xgb.Booster:
+    def run_full_pipeline(self) -> Union[xgb.Booster, torch.nn.Module]:
         """Run the full pipeline from raw data to trained model.
         
         Returns:
@@ -159,7 +162,7 @@ class KIBAModelPipeline:
         except Exception as e:
             logger.error(f"Pipeline failed: {str(e)}")
             logger.debug(traceback.format_exc())
-            raise
+            raise  # Re-raise the exception to ensure proper error handling upstream
     
     def setup_for_prediction(self) -> None:
         """Set up the pipeline for making predictions.

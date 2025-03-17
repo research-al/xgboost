@@ -12,6 +12,7 @@ import torch
 
 from kiba_model.config import KIBAConfig
 from kiba_model.modeling.models.base import BaseModel
+from kiba_model.modeling.models.neural_network_model import NeuralNetTrainer
 
 logger = logging.getLogger("kiba_model")
 
@@ -52,18 +53,14 @@ class ModelEvaluator:
         logger.info("Evaluating model on test set...")
         
         # Make predictions based on model type
-        if self.model_type == 'neural_network':
-            # Convert to tensor
-            X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(self.device)
-            
-            # Ensure model is in evaluation mode
-            model.eval()
-            
-            # Make predictions
-            with torch.no_grad():
-                y_pred = model(X_test_tensor).cpu().numpy()
-        else:
+        if self.model_type == 'neural_network' or isinstance(model, NeuralNetTrainer):
+            # Use the predict method from NeuralNetTrainer
             y_pred = model.predict(X_test)
+        elif hasattr(model, 'predict'):
+            # Standard predict method for most model types
+            y_pred = model.predict(X_test)
+        else:
+            raise ValueError(f"Unknown model type: {type(model)}")
         
         # Convert from log scale back to original scale
         if self.config.use_log10_transform:
@@ -187,19 +184,15 @@ class ModelEvaluator:
         """
         logger.info("Generating visualizations...")
         
-        # Make predictions based on model type
-        if self.model_type == 'neural_network':
-            # Convert to tensor
-            X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(self.device)
-            
-            # Ensure model is in evaluation mode
-            model.eval()
-            
-            # Make predictions
-            with torch.no_grad():
-                y_pred = model(X_test_tensor).cpu().numpy()
-        else:
+            # Make predictions based on model type
+        if self.model_type == 'neural_network' or type(model).__name__ == 'NeuralNetTrainer':
+            # Use predict method for neural networks
             y_pred = model.predict(X_test)
+        elif hasattr(model, 'predict'):
+            # Standard predict method for most model types
+            y_pred = model.predict(X_test)
+        else:
+            raise ValueError(f"Unknown model type: {type(model)}")
         
         # Convert from log scale back to original scale
         if self.config.use_log10_transform:

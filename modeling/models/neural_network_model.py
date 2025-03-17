@@ -227,6 +227,25 @@ class NeuralNetTrainer:
             predictions = self.model(X_tensor).cpu().numpy()
             
         return predictions
+    def save(self, file_path: str) -> None:
+        """Save the model to disk.
+        
+        Args:
+            file_path: Path to save the model
+        """
+        if self.model is None:
+            logger.error("Cannot save: no model has been trained")
+            return
+            
+        # Make sure path exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        # Adjust file path to use .pt extension for PyTorch models
+        file_path = str(file_path).replace('.json', '.pt')
+        
+        # Save model state dict
+        torch.save(self.model.state_dict(), file_path)
+        logger.info(f"Neural network model saved to {file_path}")
 
 
 # Add the BaseModel implementation for neural networks
@@ -279,9 +298,7 @@ class NeuralNetworkModel(BaseModel):
             logger.warning("Validation data not provided, using 10% of training data")
             # Split training data into train and validation
             from sklearn.model_selection import train_test_split
-            X_train, X_val, y_train, y_val = train_test_split(
-                X_train, y_train, test_size=0.1, random_state=self.config.random_state
-            )
+            X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=self.config.random_state)
         
         # Train model
         history = self.trainer.train(
