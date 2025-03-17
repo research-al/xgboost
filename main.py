@@ -1,5 +1,4 @@
 """Command-line interface for KIBA prediction model."""
-"""Command-line interface for KIBA prediction model."""
 
 import os
 import sys
@@ -21,12 +20,10 @@ def main():
     import argparse
     import sys
 
-
-    
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='KIBA Dataset Analysis and Modeling Pipeline')
 
-            # Create mutually exclusive group for different modes
+    # Create mutually exclusive group for different modes
     mode_group = parser.add_mutually_exclusive_group(required=True)
     
     mode_group.add_argument('--predict-ids', action='store_true', 
@@ -57,13 +54,11 @@ def main():
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
     parser.add_argument('--model-type', type=str, default='xgboost', 
-                      choices=['xgboost', 'neural_network', 'nn'],
-                      help='Type of model to use (default: xgboost)')
-    # In kiba_model/main.py - Add to argument parser
-
+                        choices=['xgboost', 'neural_network'],
+                        help='Model type to use (xgboost or neural_network)')
     parser.add_argument('--uniprot-id', type=str, help='UniProt ID for prediction')
     parser.add_argument('--pubchem-id', type=str, help='PubChem CID for prediction')
-    parser.add_argument('--is-experimental', action='store_true', help='Flag indicating prediction is for experimental data')
+    parser.add_argument('--is-experimental', action='store_true', help='Indicate if prediction is for experimental data')
     
     args = parser.parse_args()
     
@@ -84,7 +79,7 @@ def main():
         logs_dir=args.logs_dir,
         kiba_score_threshold=args.kiba_threshold,
         protein_min_length=args.protein_min_length,
-        protein_max_length=args.protein_max_length,  # Added new parameter
+        protein_max_length=args.protein_max_length,
         smiles_max_length=args.smiles_max_length,
         use_log10_transform=args.log10,
         gpu_enabled=not args.no_gpu,
@@ -92,14 +87,15 @@ def main():
         random_state=args.seed,
         backup_existing=not args.no_backup,
         allow_empty_results=args.allow_empty,
-        min_valid_interactions=args.min_interactions
+        min_valid_interactions=args.min_interactions,
+        model_type=args.model_type  # Add model type to config
     )
     
     # Set file paths
     config.set_file_paths(args.kiba_file, args.protein_file, args.compound_file)
     
     # Create pipeline
-    pipeline = KIBAModelPipeline(config, model_type=args.model_type)
+    pipeline = KIBAModelPipeline(config)
     
     try:
         if args.predict_ids:
@@ -107,7 +103,7 @@ def main():
                 print("Error: Both --uniprot-id and --pubchem-id are required for ID-based prediction")
                 sys.exit(1)
                 
-            prediction = pipeline.predict_by_id(args.uniprot_id, args.pubchem_id, args.is_experimental)
+            prediction = pipeline.predict_by_id(args.uniprot_id, args.pubchem_id)
             
             if prediction:
                 print("\nPrediction results:")
@@ -135,7 +131,7 @@ def main():
                 if compound_id.lower() == 'q':
                     break
                 
-                is_exp = args.is_experimental
+                is_exp = input("Is this experimental data? (y/n): ").lower() == 'y'
                 
                 # Make prediction
                 prediction = pipeline.predict(protein_id, compound_id, is_exp)
@@ -170,7 +166,7 @@ def main():
                     pipeline.setup_for_prediction()
                     
                     # Make sample prediction
-                    prediction = pipeline.predict(protein_id, compound_id, args.is_experimental)
+                    prediction = pipeline.predict(protein_id, compound_id)
                     
                     if prediction:
                         logger.info(f"\nSample prediction for protein {protein_id} and compound {compound_id}:")

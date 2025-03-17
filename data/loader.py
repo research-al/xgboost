@@ -49,6 +49,16 @@ class DataLoader:
         try:
             start_time = time.time()
             self.kiba_data = pd.read_csv(self.config.kiba_file)
+            
+            # Fix pubchem_cid data type to ensure consistent ID matching
+            if 'pubchem_cid' in self.kiba_data.columns:
+                try:
+                    # Convert to integer if possible (removing decimal part)
+                    self.kiba_data['pubchem_cid'] = self.kiba_data['pubchem_cid'].astype(int)
+                    logger.info("Converted pubchem_cid to integer for better ID matching")
+                except Exception as e:
+                    logger.warning(f"Could not convert pubchem_cid to integer: {str(e)}")
+            
             logger.info(f"Loaded KIBA data: {len(self.kiba_data)} rows in {time.time() - start_time:.2f}s")
             
             # Check if empty

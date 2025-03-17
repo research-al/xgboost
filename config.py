@@ -34,7 +34,8 @@ class KIBAConfig:
         backup_existing: bool = True,
         allow_empty_results: bool = False,
         min_valid_interactions: int = 50,
-        fallback_to_lenient_filtering: bool = True
+        fallback_to_lenient_filtering: bool = True,
+        model_type: str = "xgboost"  # Add model_type parameter
     ):
         """Initialize KIBA model configuration."""
         # Store runtime configuration
@@ -53,6 +54,7 @@ class KIBAConfig:
         self.allow_empty_results = allow_empty_results
         self.min_valid_interactions = min_valid_interactions
         self.fallback_to_lenient_filtering = fallback_to_lenient_filtering
+        self.model_type = model_type  # Store model type
         
         # Setup directories
         self.data_dir = Path(data_dir)
@@ -98,6 +100,7 @@ class KIBAConfig:
         logger.info(f"Results directory: {self.results_dir}")
         logger.info(f"Protein sequence length range: {self.protein_min_length}-{self.protein_max_length}")
         logger.info(f"Using {'log10' if use_log10_transform else 'natural log'} transformation")
+        logger.info(f"Model type: {self.model_type}")
         
     def set_file_paths(self, kiba_file: str, protein_file: str, compound_file: str) -> None:
         """Set paths for input data files."""
@@ -112,9 +115,44 @@ class KIBAConfig:
         
     def backup_files(self) -> None:
         """Create backups of existing output files if they exist."""
-        # Implementation of backup_files method here
-        # (Copy from original implementation)
+        if not self.backup_existing:
+            return
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
+        # Files to check and potentially backup
+        files_to_backup = [
+            self.filtered_interactions_file,
+            self.filtered_proteins_file,
+            self.filtered_compounds_file,
+            self.protein_embeddings_file,
+            self.compound_embeddings_file,
+            self.X_features_file,
+            self.y_target_file,
+            self.strata_array_file,
+            self.initial_model_file,
+            self.final_model_file,
+            self.best_params_file,
+            self.metrics_file
+        ]
+        
+        # Add neural network model files if model type is neural_network
+        if self.model_type == "neural_network":
+            files_to_backup.extend([
+                Path(str(self.initial_model_file).replace('.json', '.pt')),
+                Path(str(self.final_model_file).replace('.json', '.pt'))
+            ])
+            
+        # Create backup for each existing file
+        for file_path in files_to_backup:
+            if file_path.exists():
+                backup_path = file_path.with_name(f"{file_path.stem}_{timestamp}{file_path.suffix}")
+                try:
+                    shutil.copy2(file_path, backup_path)
+                    logger.info(f"Created backup: {file_path} → {backup_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to create backup for {file_path}: {str(e)}")
+    
     def get_xgb_params(self) -> Dict[str, Any]:
         """Get default XGBoost parameters."""
         params = {

@@ -1,393 +1,395 @@
-"""Neural Network model implementation using PyTorch for KIBA prediction."""
+"""Neural network model for KIBA prediction."""
 
 import os
 import time
-import json
-import pickle
 import logging
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
-from typing import Dict, Any, Optional, Union, Tuple, List
-
-from kiba_model.modeling.models.base import BaseModel
-from kiba_model.config import KIBAConfig
+from sklearn.metrics import mean_squared_error, r2_score
+import pickle
+from typing import Dict, Tuple, List, Optional, Union, Any
 
 logger = logging.getLogger("kiba_model")
 
 class KIBANeuralNetwork(nn.Module):
-    """PyTorch neural network model for KIBA prediction."""
+    """Neural network model for KIBA prediction."""
     
-    def __init__(self, input_dim: int, hidden_layers: List[int], dropout_rate: float = 0.3, 
-                activation: str = 'relu'):
-        """Initialize the neural network architecture.
+    def __init__(self, input_dim: int, hidden_layers: List[int] = [512, 256, 128, 64], 
+                 dropout: float = 0.3):
+        """Initialize neural network with specified architecture.
         
         Args:
-            input_dim: Number of input features
+            input_dim: Dimension of input features
             hidden_layers: List of hidden layer sizes
-            dropout_rate: Dropout rate for regularization
-            activation: Activation function ('relu' or 'leaky_relu')
+            dropout: Dropout probability
         """
         super(KIBANeuralNetwork, self).__init__()
         
-        # Create layers list
+        self.input_dim = input_dim
+        self.hidden_layers = hidden_layers
+        self.dropout_rate = dropout
+        
+        # Build layers
         layers = []
-        prev_dim = input_dim
+        prev_size = input_dim
         
-        # Set activation function
-        if activation.lower() == 'relu':
-            act_fn = nn.ReLU()
-        elif activation.lower() == 'leaky_relu':
-            act_fn = nn.LeakyReLU(0.1)
-        else:
-            act_fn = nn.ReLU()  # Default to ReLU
-        
-        # Build hidden layers
-        for layer_dim in hidden_layers:
-            layers.append(nn.Linear(prev_dim, layer_dim))
-            layers.append(nn.BatchNorm1d(layer_dim))
-            layers.append(act_fn)
-            layers.append(nn.Dropout(dropout_rate))
-            prev_dim = layer_dim
+        for i, size in enumerate(hidden_layers):
+            # Add linear layer
+            layers.append(nn.Linear(prev_size, size))
+            
+            # Add batch normalization
+            layers.append(nn.BatchNorm1d(size))
+            
+            # Add activation
+            layers.append(nn.ReLU())
+            
+            # Add dropout for regularization (except last layer)
+            if i < len(hidden_layers) - 1 or dropout > 0:
+                layers.append(nn.Dropout(dropout))
+                
+            prev_size = size
         
         # Output layer
-        layers.append(nn.Linear(prev_dim, 1))
+        layers.append(nn.Linear(prev_size, 1))
         
         # Create sequential model
         self.model = nn.Sequential(*layers)
-    
-    def forward(self, x):
-        """Forward pass through the network."""
-        return self.model(x)
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through the network.
+        
+        Args:
+            x: Input tensor
+            
+        Returns:
+            Output tensor (predictions)
+        """
+        return self.model(x).squeeze()
 
 
-class NeuralNetworkModel(BaseModel):
-    """PyTorch Neural Network implementation for KIBA prediction."""
+class NeuralNetTrainer:
+    """Class for training and tuning neural network models for KIBA prediction."""
     
-    def __init__(self, config: KIBAConfig, **kwargs):
-        """Initialize the Neural Network model.
+    def __init__(self, config):
+        """Initialize with configuration.
         
         Args:
             config: KIBAConfig object with model parameters
-            **kwargs: Additional model-specific parameters including:
-                - hidden_layers: List of integers defining hidden layer sizes
-                - dropout_rate: Dropout rate for regularization
-                - learning_rate: Learning rate for optimizer
-                - batch_size: Batch size for training
-                - activation: Activation function for hidden layers
-                - device: Device to use for training ('cpu', 'cuda')
         """
         self.config = config
+        self.device = torch.device("cuda" if torch.cuda.is_available() and config.gpu_enabled else "cpu")
         self.model = None
+        self.best_model_state = None
         self.history = {"train_loss": [], "val_loss": []}
-        self.best_epoch = None
-        self.best_val_loss = float('inf')
-        self.feature_names = kwargs.get('feature_names', None)
         
-        # Neural network parameters
-        self.hidden_layers = kwargs.get('hidden_layers', [512, 256, 128, 64])
-        self.dropout_rate = kwargs.get('dropout_rate', 0.3)
-        self.learning_rate = kwargs.get('learning_rate', 0.001)
-        self.batch_size = kwargs.get('batch_size', self.config.batch_size)
-        self.activation = kwargs.get('activation', 'relu')
+        logger.info(f"Neural Network initialized: device={self.device}, "
+                    f"hidden_layers=[512, 256, 128, 64], dropout=0.3")
         
-        # Set device
-        self.device_name = kwargs.get('device', 'cuda' if torch.cuda.is_available() and self.config.gpu_enabled else 'cpu')
-        self.device = torch.device(self.device_name)
-        
-        # Store all parameters for saving/loading
-        self.params = {
-            'hidden_layers': self.hidden_layers,
-            'dropout_rate': self.dropout_rate,
-            'learning_rate': self.learning_rate,
-            'batch_size': self.batch_size,
-            'activation': self.activation,
-            'device': self.device_name
-        }
-        
-        logger.info(f"Neural Network initialized: device={self.device_name}, "
-                   f"hidden_layers={self.hidden_layers}, dropout={self.dropout_rate}")
-    
-    def _build_model(self, input_dim: int) -> None:
-        """Build the neural network model architecture.
+    def _to_tensor(self, data: np.ndarray) -> torch.Tensor:
+        """Convert numpy array to PyTorch tensor.
         
         Args:
-            input_dim: Number of input features
-        """
-        # Create the PyTorch model
-        self.model = KIBANeuralNetwork(
-            input_dim=input_dim,
-            hidden_layers=self.hidden_layers,
-            dropout_rate=self.dropout_rate,
-            activation=self.activation
-        ).to(self.device)
-        
-        # Define optimizer and loss function
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-        self.criterion = nn.MSELoss()
-    
-    def train(self, X_train: np.ndarray, y_train: np.ndarray, 
-              X_val: Optional[np.ndarray] = None, y_val: Optional[np.ndarray] = None,
-              **kwargs) -> nn.Module:
-        """Train the neural network model.
-        
-        Args:
-            X_train: Training feature matrix
-            y_train: Training target vector
-            X_val: Optional validation feature matrix
-            y_val: Optional validation target vector
-            **kwargs: Additional training parameters including:
-                - epochs: Number of training epochs
-                - patience: Early stopping patience
-                - verbose: Verbosity level (0, 1, or 2)
+            data: NumPy array
             
         Returns:
-            Trained PyTorch model
+            PyTorch tensor
         """
-        logger.info("Training Neural Network model using PyTorch...")
+        return torch.tensor(data, dtype=torch.float32, device=self.device)
+    
+    def train(self, X_train: np.ndarray, y_train: np.ndarray, 
+              X_val: np.ndarray, y_val: np.ndarray,
+              epochs: int = 100, batch_size: int = 32, 
+              learning_rate: float = 0.001) -> Dict[str, List[float]]:
+        """Train neural network model.
         
-        # Process kwargs
-        epochs = kwargs.get('epochs', 100)
-        patience = kwargs.get('patience', 10)
-        verbose = kwargs.get('verbose', 1)
-        
-        # Reshape y if needed and convert to tensors
-        X_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(self.device)
-        y_train_tensor = torch.tensor(y_train.reshape(-1, 1), dtype=torch.float32).to(self.device)
-        
-        # Create validation tensors if provided
-        has_validation = X_val is not None and y_val is not None
-        if has_validation:
-            X_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(self.device)
-            y_val_tensor = torch.tensor(y_val.reshape(-1, 1), dtype=torch.float32).to(self.device)
+        Args:
+            X_train: Training features
+            y_train: Training targets
+            X_val: Validation features
+            y_val: Validation targets
+            epochs: Number of training epochs
+            batch_size: Batch size
+            learning_rate: Learning rate
+            
+        Returns:
+            Dictionary with training history
+        """
+        # Convert data to tensors
+        X_train_tensor = self._to_tensor(X_train)
+        y_train_tensor = self._to_tensor(y_train)
+        X_val_tensor = self._to_tensor(X_val)
+        y_val_tensor = self._to_tensor(y_val)
         
         # Create datasets and dataloaders
         train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         
-        # Build model architecture
+        # Initialize model
         input_dim = X_train.shape[1]
-        if self.model is None:
-            self._build_model(input_dim)
+        self.model = KIBANeuralNetwork(input_dim).to(self.device)
+        
+        # Loss function and optimizer
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+        
+        # Early stopping
+        best_val_loss = float('inf')
+        patience = 10
+        patience_counter = 0
+        
+        logger.info(f"Starting neural network training for {epochs} epochs")
+        logger.info(f"Learning rate: {learning_rate}, batch size: {batch_size}")
         
         # Training loop
         start_time = time.time()
-        best_val_loss = float('inf')
-        best_model_state = None
-        no_improve_epochs = 0
-        
         for epoch in range(epochs):
-            # Training phase
             self.model.train()
-            train_loss = 0.0
+            total_loss = 0.0
             
-            for batch_X, batch_y in train_loader:
-                # Zero the gradients
-                self.optimizer.zero_grad()
-                
+            for inputs, targets in train_loader:
                 # Forward pass
-                outputs = self.model(batch_X)
-                loss = self.criterion(outputs, batch_y)
+                outputs = self.model(inputs)
+                loss = criterion(outputs, targets)
                 
-                # Backward pass and optimization
+                # Backward pass and optimize
+                optimizer.zero_grad()
                 loss.backward()
-                self.optimizer.step()
+                optimizer.step()
                 
-                train_loss += loss.item() * batch_X.size(0)
+                total_loss += loss.item()
             
-            train_loss /= len(train_loader.dataset)
-            self.history["train_loss"].append(train_loss)
+            # Calculate average loss
+            avg_train_loss = total_loss / len(train_loader)
+            self.history["train_loss"].append(avg_train_loss)
             
-            # Validation phase
-            if has_validation:
-                self.model.eval()
-                with torch.no_grad():
-                    val_outputs = self.model(X_val_tensor)
-                    val_loss = self.criterion(val_outputs, y_val_tensor).item()
-                    self.history["val_loss"].append(val_loss)
-                
-                # Check for improvement
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    best_model_state = self.model.state_dict().copy()
-                    self.best_val_loss = val_loss
-                    self.best_epoch = epoch + 1
-                    no_improve_epochs = 0
-                else:
-                    no_improve_epochs += 1
-                
-                # Early stopping
-                if no_improve_epochs >= patience:
-                    if verbose > 0:
-                        logger.info(f"Early stopping at epoch {epoch+1}")
-                    break
-                
-                # Print progress
-                if verbose > 0 and (epoch % 10 == 0 or epoch == epochs - 1):
-                    logger.info(f"Epoch {epoch+1}/{epochs} - train_loss: {train_loss:.6f}, val_loss: {val_loss:.6f}")
+            # Validation
+            self.model.eval()
+            with torch.no_grad():
+                val_outputs = self.model(X_val_tensor)
+                val_loss = criterion(val_outputs, y_val_tensor).item()
+                self.history["val_loss"].append(val_loss)
+            
+            # Update learning rate
+            scheduler.step(val_loss)
+            
+            # Log progress every 10 epochs
+            if (epoch + 1) % 10 == 0:
+                logger.info(f"Epoch [{epoch+1}/{epochs}], Train Loss: {avg_train_loss:.6f}, "
+                           f"Val Loss: {val_loss:.6f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
+            
+            # Early stopping check
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                self.best_model_state = self.model.state_dict().copy()
+                patience_counter = 0
             else:
-                # Print progress without validation
-                if verbose > 0 and (epoch % 10 == 0 or epoch == epochs - 1):
-                    logger.info(f"Epoch {epoch+1}/{epochs} - train_loss: {train_loss:.6f}")
-        
-        # Load best model if we have validation data
-        if has_validation and best_model_state is not None:
-            self.model.load_state_dict(best_model_state)
+                patience_counter += 1
+                
+            if patience_counter >= patience:
+                logger.info(f"Early stopping at epoch {epoch+1}")
+                break
         
         training_time = time.time() - start_time
-        logger.info(f"Neural Network model trained in {training_time:.2f}s")
-        if self.best_epoch and self.best_val_loss:
-            logger.info(f"Best epoch: {self.best_epoch}, Best validation loss: {self.best_val_loss:.6f}")
+        logger.info(f"Training completed in {training_time:.2f}s, best validation loss: {best_val_loss:.6f}")
+        
+        # Load best model
+        if self.best_model_state is not None:
+            self.model.load_state_dict(self.best_model_state)
+        
+        return self.history
+    
+    def tune_hyperparameters(self, X_train: np.ndarray, y_train: np.ndarray, 
+                            X_val: np.ndarray, y_val: np.ndarray) -> Dict[str, Any]:
+        """Tune hyperparameters for neural network model.
+        
+        Args:
+            X_train: Training features
+            y_train: Training targets
+            X_val: Validation features
+            y_val: Validation targets
+            
+        Returns:
+            Dictionary with best parameters
+        """
+        logger.info("Tuning neural network hyperparameters...")
+        
+        # Define parameter grid
+        param_grid = {
+            'learning_rate': [0.001, 0.0005],
+            'batch_size': [16, 32],
+            'dropout': [0.2, 0.3]
+        }
+        
+        best_val_loss = float('inf')
+        best_params = None
+        
+        # Try different parameter combinations
+        for lr in param_grid['learning_rate']:
+            for batch_size in param_grid['batch_size']:
+                for dropout in param_grid['dropout']:
+                    logger.info(f"Testing: learning_rate={lr}, batch_size={batch_size}, dropout={dropout}")
+                    
+                    # Initialize model
+                    input_dim = X_train.shape[1]
+                    self.model = KIBANeuralNetwork(input_dim, dropout=dropout).to(self.device)
+                    
+                    # Train model
+                    history = self.train(X_train, y_train, X_val, y_val, 
+                                         epochs=50, batch_size=batch_size, learning_rate=lr)
+                    
+                    # Get best validation loss
+                    val_loss = min(history['val_loss'])
+                    
+                    logger.info(f"  Validation loss: {val_loss:.6f}")
+                    
+                    # Update best parameters
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        best_params = {
+                            'learning_rate': lr,
+                            'batch_size': batch_size,
+                            'dropout': dropout,
+                            'val_loss': val_loss
+                        }
+        
+        logger.info(f"Best parameters: {best_params}")
+        return best_params
+    
+    def train_final_model(self, X_train: np.ndarray, y_train: np.ndarray, 
+                          X_val: np.ndarray, y_val: np.ndarray,
+                          best_params: Dict[str, Any], epochs: int = 200) -> nn.Module:
+        """Train final model with best parameters.
+        
+        Args:
+            X_train: Training features
+            y_train: Training targets
+            X_val: Validation features
+            y_val: Validation targets
+            best_params: Best hyperparameters
+            epochs: Number of training epochs
+            
+        Returns:
+            Trained neural network model
+        """
+        logger.info("Training final neural network model with best parameters...")
+        
+        # Combine train and validation data
+        X_train_full = np.vstack([X_train, X_val])
+        y_train_full = np.concatenate([y_train, y_val])
+        
+        # Convert data to tensors
+        X_train_tensor = self._to_tensor(X_train_full)
+        y_train_tensor = self._to_tensor(y_train_full)
+        
+        # Create dataset and dataloader
+        train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=best_params['batch_size'], 
+            shuffle=True
+        )
+        
+        # Initialize model with best parameters
+        input_dim = X_train_full.shape[1]
+        self.model = KIBANeuralNetwork(input_dim, dropout=best_params['dropout']).to(self.device)
+        
+        # Loss function and optimizer
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(self.model.parameters(), lr=best_params['learning_rate'])
+        
+        # Training loop
+        logger.info(f"Training final model for {epochs} epochs with best parameters")
+        start_time = time.time()
+        
+        for epoch in range(epochs):
+            self.model.train()
+            total_loss = 0.0
+            
+            for inputs, targets in train_loader:
+                # Forward pass
+                outputs = self.model(inputs)
+                loss = criterion(outputs, targets)
+                
+                # Backward pass and optimize
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                total_loss += loss.item()
+            
+            # Log progress every 20 epochs
+            if (epoch + 1) % 20 == 0:
+                avg_loss = total_loss / len(train_loader)
+                logger.info(f"Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.6f}")
+        
+        training_time = time.time() - start_time
+        logger.info(f"Final model trained in {training_time:.2f}s")
         
         return self.model
     
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        """Make predictions with the trained model.
+    def save_model(self, model_path: str) -> None:
+        """Save model to file.
         
         Args:
-            X: Feature matrix to predict on
-            
-        Returns:
-            Array of predictions
+            model_path: Path to save model
         """
         if self.model is None:
-            raise ValueError("Model not trained or loaded. Call train() or load() first.")
+            logger.error("Cannot save model: no model has been trained")
+            return
+            
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
+            
+            # Save model state dict
+            torch.save(self.model.state_dict(), model_path)
+            logger.info(f"Model saved to {model_path}")
+        except Exception as e:
+            logger.error(f"Error saving model: {str(e)}")
+    
+    def load_model(self, model_path: str, input_dim: int) -> None:
+        """Load model from file.
         
+        Args:
+            model_path: Path to model file
+            input_dim: Input dimension for model
+        """
+        try:
+            # Initialize model
+            self.model = KIBANeuralNetwork(input_dim).to(self.device)
+            
+            # Load model state dict
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+            self.model.eval()
+            
+            logger.info(f"Model loaded from {model_path}")
+        except Exception as e:
+            logger.error(f"Error loading model: {str(e)}")
+            self.model = None
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Make predictions with model.
+        
+        Args:
+            X: Features
+            
+        Returns:
+            Predictions
+        """
+        if self.model is None:
+            logger.error("Cannot predict: no model has been trained or loaded")
+            return None
+            
         # Convert to tensor
-        X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
+        X_tensor = self._to_tensor(X)
         
-        # Make predictions
+        # Predict
         self.model.eval()
         with torch.no_grad():
             predictions = self.model(X_tensor).cpu().numpy()
-        
-        return predictions.flatten()  # Return 1D array for consistency with XGBoost
-    
-    def save(self, file_path: str) -> None:
-        """Save the model to disk.
-        
-        Args:
-            file_path: Path to save the model
-        """
-        if self.model is None:
-            raise ValueError("No model to save. Train the model first.")
-        
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        
-        # Save model state dictionary
-        model_path = file_path + ".pt"
-        torch.save(self.model.state_dict(), model_path)
-        
-        # Save model architecture and metadata
-        metadata = {
-            'params': self.params,
-            'best_epoch': self.best_epoch,
-            'best_val_loss': self.best_val_loss,
-            'feature_names': self.feature_names,
-            'input_dim': next(self.model.parameters()).shape[1] if len(list(self.model.parameters())) > 0 else None,
-            'history': self.history
-        }
-        
-        metadata_path = file_path + ".json"
-        with open(metadata_path, 'w') as f:
-            # Convert numpy and torch types to Python native types
-            def convert_to_serializable(obj):
-                if isinstance(obj, (np.integer, np.floating)):
-                    return obj.item()
-                elif isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                return obj
             
-            # Use custom serialization
-            serializable_metadata = {k: convert_to_serializable(v) for k, v in metadata.items()}
-            json.dump(serializable_metadata, f, indent=2)
-        
-        logger.info(f"PyTorch Neural Network model saved to {model_path} with metadata at {metadata_path}")
-    
-    def load(self, file_path: str) -> None:
-        """Load the model from disk.
-        
-        Args:
-            file_path: Path to load the model from
-        """
-        model_path = file_path + ".pt"
-        metadata_path = file_path + ".json"
-        
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-        if not os.path.exists(metadata_path):
-            raise FileNotFoundError(f"Model metadata not found: {metadata_path}")
-        
-        # Load metadata
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-            
-        self.params = metadata['params']
-        self.best_epoch = metadata.get('best_epoch')
-        self.best_val_loss = metadata.get('best_val_loss')
-        self.feature_names = metadata.get('feature_names')
-        self.history = metadata.get('history', {"train_loss": [], "val_loss": []})
-        
-        # Restore parameters
-        self.hidden_layers = self.params['hidden_layers']
-        self.dropout_rate = self.params['dropout_rate']
-        self.learning_rate = self.params['learning_rate']
-        self.batch_size = self.params['batch_size']
-        self.activation = self.params['activation']
-        
-        # Load device
-        self.device_name = self.params.get('device', 'cuda' if torch.cuda.is_available() and self.config.gpu_enabled else 'cpu')
-        self.device = torch.device(self.device_name)
-        
-        # Build model with the same architecture
-        input_dim = metadata.get('input_dim')
-        if input_dim is None:
-            raise ValueError("Input dimension not found in metadata")
-            
-        self._build_model(input_dim)
-        
-        # Load model state
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-        self.model.eval()  # Set to evaluation mode
-        
-        logger.info(f"PyTorch Neural Network model loaded from {model_path}")
-    
-    def get_params(self) -> Dict[str, Any]:
-        """Get the model parameters.
-        
-        Returns:
-            Dictionary of model parameters
-        """
-        return self.params
-    
-    def set_params(self, params: Dict[str, Any]) -> None:
-        """Set the model parameters.
-        
-        Args:
-            params: Dictionary of model parameters
-        """
-        for key, value in params.items():
-            if key in self.params:
-                self.params[key] = value
-                setattr(self, key, value)
-        
-        # Note: This doesn't rebuild the model - only sets params for next training
-        logger.info("Model parameters updated. Model will need to be retrained to apply them.")
-    
-    def get_feature_importance(self) -> Optional[Dict[str, float]]:
-        """Get feature importances if available.
-        
-        Neural networks don't have native feature importance like tree-based models.
-        This implementation returns None as feature importance is not directly available.
-        
-        Returns:
-            None (feature importances not available for neural networks)
-        """
-        if self.model is None:
-            return None
-            
-        logger.warning("Feature importance not available for neural network models")
-        return None
+        return predictions

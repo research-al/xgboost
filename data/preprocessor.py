@@ -1,4 +1,3 @@
-
 import logging
 import pandas as pd
 import numpy as np
@@ -161,12 +160,27 @@ class DataPreprocessor:
         # 5. Convert ID columns to string for consistent matching
         # The key improvement here is to ensure all IDs are treated as strings
         # to avoid type mismatch in joins
-# Convert IDs to string with matching formats
-        interactions_clean['pubchem_cid_str'] = interactions_clean['pubchem_cid'].astype(int).astype(str)
+        # Convert IDs to string with matching formats, ensuring consistency
+        try:
+            # Convert pubchem_cid to integer first (removes decimal part) then to string
+            interactions_clean['pubchem_cid_str'] = interactions_clean['pubchem_cid'].astype(int).astype(str)
+        except Exception as e:
+            logger.warning(f"Error converting pubchem_cid: {str(e)}. Trying alternate approach.")
+            # If that fails, try a different approach
+            interactions_clean['pubchem_cid_str'] = interactions_clean['pubchem_cid'].fillna(-1).astype(float).astype(int).astype(str)
+            # Replace -1 with empty string
+            interactions_clean.loc[interactions_clean['pubchem_cid_str'] == '-1', 'pubchem_cid_str'] = ''
+
         interactions_clean['UniProt_ID_str'] = interactions_clean['UniProt_ID'].astype(str)
         valid_proteins['UniProt_ID_str'] = valid_proteins['UniProt_ID'].astype(str)
         valid_compounds['cid_str'] = valid_compounds['cid'].astype(str)
-        
+
+        # Check for matches before filtering
+        comp_ids_in_kiba = set(interactions_clean['pubchem_cid_str'])
+        comp_ids_in_compounds = set(valid_compounds['cid_str'])
+        overlap = comp_ids_in_kiba.intersection(comp_ids_in_compounds)
+        logger.info(f"CID matching: {len(overlap)} out of {len(comp_ids_in_kiba)} IDs in KIBA file match compound IDs ({len(overlap)/len(comp_ids_in_kiba)*100:.1f}%)")
+
         logger.info(f"Converted ID columns to string type for consistent matching")
         
         # 6. Filter interactions to only include valid proteins and compounds

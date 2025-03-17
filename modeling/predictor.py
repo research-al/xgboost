@@ -5,10 +5,11 @@ import logging
 import traceback
 import numpy as np
 import h5py
+import torch
 from typing import Dict, Tuple, List, Optional, Union, Any
 
 from kiba_model.config import KIBAConfig
-from kiba_model.modeling.models.base import BaseModel, ModelFactory
+from kiba_model.modeling.models.base import ModelFactory
 
 logger = logging.getLogger("kiba_model")
 
@@ -19,16 +20,16 @@ class Predictor:
     on new protein-compound pairs.
     """
     
-    def __init__(self, config: KIBAConfig, model_type: str = 'xgboost'):
+    def __init__(self, config: KIBAConfig):
         """Initialize with configuration.
         
         Args:
             config: KIBAConfig object with paths and settings
-            model_type: Type of model to use ('xgboost', 'neural_network', etc.)
         """
         self.config = config
-        self.model_type = model_type
         self.model = None
+        self.model_type = getattr(config, 'model_type', 'xgboost')
+        self.device = torch.device("cuda" if torch.cuda.is_available() and config.gpu_enabled else "cpu")
         self.protein_embeddings = None
         self.protein_ids = None
         self.compound_embeddings = None
@@ -45,56 +46,56 @@ class Predictor:
         """
         logger.info("Loading model and embeddings for prediction...")
         
-        # Load model
-        self._load_model()
-        
-        # Load embeddings
-        self._load_embeddings()
-    
-    def _load_model(self) -> None:
-        """Load the trained model.
-        
-        Raises:
-            FileNotFoundError: If model file doesn't exist
-            ValueError: If model can't be loaded properly
-        """
-        # Determine model file path based on model type
-        transform_suffix = "log10" if self.config.use_log10_transform else "ln"
-        model_suffix = f"{self.model_type}_{transform_suffix}"
-        model_file = os.path.join(self.config.models_dir, f"final_model_{model_suffix}")
-        
-        if not os.path.exists(model_file) and not os.path.exists(model_file + ".keras"):
-            # Try standard XGBoost file if custom model file doesn't exist
-            default_model_file = self.config.final_model_file
-            if (os.path.exists(default_model_file)):
-                model_file = default_model_file
-                self.model_type = 'xgboost'  # Force XGBoost model type
-                logger.info(f"Using default XGBoost model at {default_model_file}")
-            else:
-                error_msg = f"Model file not found: {model_file} or {default_model_file}"
+        # Load model based on model type
+        if self.model_type == 'neural_network':
+            model_file = str(self.config.final_model_file).replace('.json', '.pt')
+            
+            if not os.path.exists(model_file):
+                error_msg = f"Neural network model file not found: {model_file}"
                 logger.error(error_msg)
                 raise FileNotFoundError(error_msg)
-        
-        try:
-            # Create model instance
-            self.model = ModelFactory.create_model(self.model_type, self.config)
-            
-            # Load model
-            self.model.load(model_file)
-            logger.info(f"Loaded {self.model_type} model from {model_file}")
-        except Exception as e:
-            error_msg = f"Error loading model: {str(e)}"
-            logger.error(error_msg)
-            logger.debug(traceback.format_exc())
-            raise ValueError(error_msg)
+                
+            try:
+                # First load embeddings to get input dimension
+                self._load_embeddings()
+                
+                # Initialize neural network model
+                input_dim = self.protein_embeddings.shape[1] + self.compound_embeddings.shape[1] + 1
+                self.model = ModelFactory.create_model('neural_network', self.config, input_dim=input_dim).to(self.device)
+                
+                # Load model weights
+                self.model.load_state_dict(torch.load(model_file, map_location=self.device))
+                self.model.eval()  # Set to evaluation mode
+                
+                logger.info(f"Loaded neural network model from {model_file}")
+            except Exception as e:
+                error_msg = f"Error loading neural network model: {str(e)}"
+                logger.error(error_msg)
+                logger.debug(traceback.format_exc())
+                raise ValueError(error_msg)
+        else:
+            # Load XGBoost model
+            model_file = self.config.final_model_file
+            if not os.path.exists(model_file):
+                error_msg = f"XGBoost model file not found: {model_file}"
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+                
+            try:
+                self.model = ModelFactory.create_model('xgboost', self.config)
+                self.model.load(model_file)
+                logger.info(f"Loaded XGBoost model from {model_file}")
+                
+                # Load embeddings
+                self._load_embeddings()
+            except Exception as e:
+                error_msg = f"Error loading XGBoost model: {str(e)}"
+                logger.error(error_msg)
+                logger.debug(traceback.format_exc())
+                raise ValueError(error_msg)
     
     def _load_embeddings(self) -> None:
-        """Load protein and compound embeddings.
-        
-        Raises:
-            FileNotFoundError: If embedding files don't exist
-            ValueError: If embeddings can't be loaded properly
-        """
+        """Load protein and compound embeddings."""
         # Load protein embeddings
         protein_file = self.config.protein_embeddings_file
         if not os.path.exists(protein_file):
@@ -193,16 +194,26 @@ class Predictor:
             compound_dim = self.compound_embeddings.shape[1]
             
             # Create feature vector
-            X = np.zeros((1, protein_dim + compound_dim + 1), dtype=np.float32)
-            X[0, :protein_dim] = self.protein_embeddings[protein_idx]
-            X[0, protein_dim:protein_dim+compound_dim] = self.compound_embeddings[compound_idx]
-            X[0, -1] = int(is_experimental)  # Experimental flag
+            X = np.zeros(protein_dim + compound_dim + 1, dtype=np.float32)
+            X[:protein_dim] = self.protein_embeddings[protein_idx]
+            X[protein_dim:protein_dim+compound_dim] = self.compound_embeddings[compound_idx]
+            X[-1] = int(is_experimental)  # Experimental flag
             
             # Clean up feature vector
             X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
             
-            # Make prediction (log scale)
-            y_pred_log = self.model.predict(X)[0]
+            # Make prediction based on model type
+            if self.model_type == 'neural_network':
+                # Convert to PyTorch tensor
+                X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
+                
+                # Make prediction
+                with torch.no_grad():
+                    self.model.eval()
+                    y_pred_log = self.model(X_tensor.unsqueeze(0)).item()
+            else:
+                # Make prediction
+                y_pred_log = self.model.predict(X)[0]
             
             # Convert to original scale
             if self.config.use_log10_transform:
@@ -222,25 +233,23 @@ class Predictor:
             logger.error(f"Error in prediction: {str(e)}")
             logger.debug(traceback.format_exc())
             return None
-
-    def predict_by_id(self, uniprot_id: str, pubchem_id: str, is_experimental: bool = False) -> Optional[Dict[str, Any]]:
+    
+    def predict_by_id(self, uniprot_id: str, pubchem_id: str) -> Optional[Dict[str, Any]]:
         """
         Predict KIBA score directly from UniProt ID and PubChem ID.
         
         Args:
             uniprot_id: UniProt ID of the protein
             pubchem_id: PubChem CID of the compound
-            is_experimental: Whether prediction is for experimental data
             
         Returns:
             Dictionary with prediction results or None if prediction fails
         """
         logger.info(f"Predicting for UniProt ID {uniprot_id} and PubChem CID {pubchem_id}")
-        logger.info(f"Is experimental data: {is_experimental}")
         
         # Check if IDs are in embeddings
-        protein_found = uniprot_id in self.protein_id_to_idx
-        compound_found = pubchem_id in self.cid_to_idx
+        protein_found = uniprot_id in self.protein_id_to_idx if self.protein_id_to_idx else False
+        compound_found = pubchem_id in self.cid_to_idx if self.cid_to_idx else False
         
         if not protein_found or not compound_found:
             # Need to generate embeddings
@@ -287,7 +296,7 @@ class Predictor:
         
         # Now predict using the embeddings
         if protein_found and compound_found:
-            return self.predict(uniprot_id, pubchem_id, is_experimental)
+            return self.predict(uniprot_id, pubchem_id)
         else:
             if not protein_found:
                 logger.error(f"Could not find or generate embedding for protein {uniprot_id}")

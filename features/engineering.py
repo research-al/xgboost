@@ -48,15 +48,39 @@ class FeatureEngineering:
         protein_embeddings_exist = os.path.exists(self.config.protein_embeddings_file)
         compound_embeddings_exist = os.path.exists(self.config.compound_embeddings_file)
         
+        # If either file is missing or has insufficient data, generate embeddings
+        if not protein_embeddings_exist or not compound_embeddings_exist:
+            logger.info("Embedding files not found or insufficient. Will attempt to generate embeddings.")
+            
+            # Import here to avoid circular imports
+            from kiba_model.features.embedding_generator import EmbeddingGenerator
+            
+            # Create embedding generator
+            generator = EmbeddingGenerator(self.config)
+            
+            # Try to load protein and compound data
+            try:
+                # Check for filtered protein and compound files
+                if os.path.exists(self.config.filtered_proteins_file) and not protein_embeddings_exist:
+                    logger.info(f"Generating protein embeddings using {self.config.filtered_proteins_file}")
+                    proteins_df = pd.read_csv(self.config.filtered_proteins_file)
+                    generator.generate_protein_embeddings(proteins_df=proteins_df)
+                    protein_embeddings_exist = True
+                
+                if os.path.exists(self.config.filtered_compounds_file) and not compound_embeddings_exist:
+                    logger.info(f"Generating compound embeddings using {self.config.filtered_compounds_file}")
+                    compounds_df = pd.read_csv(self.config.filtered_compounds_file)
+                    generator.generate_compound_embeddings(compounds_df=compounds_df)
+                    compound_embeddings_exist = True
+            except Exception as e:
+                logger.error(f"Error generating embeddings: {str(e)}")
+                # Continue to try loading what we have
+        
         if not protein_embeddings_exist:
-            error_msg = f"Protein embeddings file not found: {self.config.protein_embeddings_file}"
-            logger.error(error_msg)
-            raise FileNotFoundError(error_msg)
+            raise FileNotFoundError(f"Protein embeddings file not found: {self.config.protein_embeddings_file}")
             
         if not compound_embeddings_exist:
-            error_msg = f"Compound embeddings file not found: {self.config.compound_embeddings_file}"
-            logger.error(error_msg)
-            raise FileNotFoundError(error_msg)
+            raise FileNotFoundError(f"Compound embeddings file not found: {self.config.compound_embeddings_file}")
         
         logger.info("Loading embeddings from disk...")
         
@@ -238,6 +262,17 @@ class FeatureEngineering:
             
             logger.info(f"Created features for {len(valid_indices)} valid interactions")
             logger.info(f"Skipped {invalid_count} interactions with problematic values or missing embeddings")
+            
+            # Warn if we have very few valid interactions
+            if len(valid_indices) < 10:
+                logger.warning(f"Only {len(valid_indices)} valid interactions after feature creation. " +
+                              "This is a very small dataset and may not be sufficient for training.")
+                
+                if len(valid_indices) < self.config.min_valid_interactions:
+                    if self.config.allow_empty_results:
+                        logger.warning(f"Continuing with only {len(valid_indices)} valid interactions as configured")
+                    else:
+                        raise ValueError(f"Only {len(valid_indices)} valid interactions (minimum required: {self.config.min_valid_interactions})")
             
             # Final validation check and cleanup
             if np.isnan(X).any() or np.isinf(X).any():

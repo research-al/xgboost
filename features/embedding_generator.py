@@ -34,6 +34,11 @@ class EmbeddingGenerator:
         
         if proteins_df is None or len(proteins_df) == 0:
             raise ValueError("No protein data provided for embedding generation")
+        
+        # Limit the number of proteins for initial processing if there are too many
+        if len(proteins_df) > 1000:
+            logger.warning(f"Large number of proteins ({len(proteins_df)}). Processing the first 1000 for initial model development.")
+            proteins_df = proteins_df.head(1000)
             
         # Load ESM model
         model_name = "facebook/esm2_t12_35M_UR50D"  # Medium-sized model
@@ -98,6 +103,11 @@ class EmbeddingGenerator:
         
         if compounds_df is None or len(compounds_df) == 0:
             raise ValueError("No compound data provided for embedding generation")
+        
+        # Limit the number of compounds for initial processing if there are too many
+        if len(compounds_df) > 1000:
+            logger.warning(f"Large number of compounds ({len(compounds_df)}). Processing the first 1000 for initial model development.")
+            compounds_df = compounds_df.head(1000)
             
         # Load ChemBERTa model
         model_name = "seyonec/ChemBERTa-zinc-base-v1"
