@@ -221,7 +221,7 @@ class ModelEvaluator:
         
         # 2. Feature importance plot (XGBoost only)
         if self.model_type == 'xgboost':
-            feature_importance = model.get_score(importance_type='gain')
+            feature_importance = model.get_feature_importance()
             if feature_importance:  # Check if there are any features with importance
                 indices = np.argsort(list(feature_importance.values()))[::-1]
                 feature_names = list(feature_importance.keys())

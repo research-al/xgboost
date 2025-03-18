@@ -194,11 +194,11 @@ class Predictor:
             protein_dim = self.protein_embeddings.shape[1]
             compound_dim = self.compound_embeddings.shape[1]
             
-            # Create feature vector
-            X = np.zeros(protein_dim + compound_dim + 1, dtype=np.float32)
-            X[:protein_dim] = self.protein_embeddings[protein_idx]
-            X[protein_dim:protein_dim+compound_dim] = self.compound_embeddings[compound_idx]
-            X[-1] = int(is_experimental)  # Experimental flag
+            # Create feature vector as a 2D array (1, features) instead of 1D
+            X = np.zeros((1, protein_dim + compound_dim + 1), dtype=np.float32)
+            X[0, :protein_dim] = self.protein_embeddings[protein_idx]
+            X[0, protein_dim:protein_dim+compound_dim] = self.compound_embeddings[compound_idx]
+            X[0, -1] = int(is_experimental)  # Experimental flag
             
             # Clean up feature vector
             X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
@@ -211,9 +211,9 @@ class Predictor:
                 # Make prediction
                 with torch.no_grad():
                     self.model.eval()
-                    y_pred_log = self.model(X_tensor.unsqueeze(0)).item()
+                    y_pred_log = self.model(X_tensor).item()
             else:
-                # Make prediction
+                # Make prediction (no need to reshape X as it's already 2D)
                 y_pred_log = self.model.predict(X)[0]
             
             # Convert to original scale
@@ -235,13 +235,14 @@ class Predictor:
             logger.debug(traceback.format_exc())
             return None
     
-    def predict_by_id(self, uniprot_id: str, pubchem_id: str) -> Optional[Dict[str, Any]]:
+    def predict_by_id(self, uniprot_id: str, pubchem_id: str, is_experimental: bool = False) -> Optional[Dict[str, Any]]:
         """
         Predict KIBA score directly from UniProt ID and PubChem ID.
         
         Args:
             uniprot_id: UniProt ID of the protein
             pubchem_id: PubChem CID of the compound
+            is_experimental: Whether prediction is for experimental data
             
         Returns:
             Dictionary with prediction results or None if prediction fails
@@ -297,7 +298,7 @@ class Predictor:
         
         # Now predict using the embeddings
         if protein_found and compound_found:
-            return self.predict(uniprot_id, pubchem_id)
+            return self.predict(uniprot_id, pubchem_id, is_experimental)
         else:
             if not protein_found:
                 logger.error(f"Could not find or generate embedding for protein {uniprot_id}")

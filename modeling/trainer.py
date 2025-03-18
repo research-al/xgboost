@@ -216,15 +216,7 @@ class ModelTrainer:
         return self.initial_model
     
     def _get_model_file_path(self, is_initial: bool = False, hyperparams: bool = False) -> str:
-        """Get file path for model saving/loading.
-        
-        Args:
-            is_initial: Whether this is the initial model or final model
-            hyperparams: Whether this is the hyperparameter file
-        
-        Returns:
-            File path string
-        """
+        """Get file path for model saving/loading."""
         # Create directory if it doesn't exist
         os.makedirs(self.config.models_dir, exist_ok=True)
         
@@ -236,7 +228,16 @@ class ModelTrainer:
         if hyperparams:
             return os.path.join(self.config.models_dir, f"best_params_{self.model_type}_{transform_suffix}.pkl")
         else:
-            return os.path.join(self.config.models_dir, f"{model_prefix}_model_{model_suffix}")
+            # Add appropriate extension based on model type
+            if self.model_type.lower() == 'xgboost':
+                extension = ".json"
+            elif self.model_type.lower() in ['neural_network', 'nn']:
+                extension = ".pt"
+            else:
+                extension = ""
+                
+        return os.path.join(self.config.models_dir, f"{model_prefix}_model_{model_suffix}{extension}")
+
     
     def tune_hyperparameters(self) -> Dict[str, Any]:
         """Tune hyperparameters for model.
