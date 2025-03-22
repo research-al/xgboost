@@ -39,61 +39,51 @@ class Predictor:
         self.cid_to_idx = {}
         
     def load_model_and_embeddings(self) -> None:
-        """Load trained model and embeddings for prediction.
-        
-        Raises:
-            FileNotFoundError: If model or embedding files don't exist
-            ValueError: If model or embeddings can't be loaded properly
-        """
+        """Load trained model and embeddings for prediction."""
         logger.info("Loading model and embeddings for prediction...")
         
-        # Load model based on model type
+        # Determine correct file extension based on model type
         if self.model_type == 'neural_network':
-            model_file = str(self.config.final_model_file).replace('.json', '.pt')
-            
-            if not os.path.exists(model_file):
-                error_msg = f"Neural network model file not found: {model_file}"
-                logger.error(error_msg)
-                raise FileNotFoundError(error_msg)
-                
-            try:
-                # First load embeddings to get input dimension
-                self._load_embeddings()
-                
-                # Initialize neural network model
-                input_dim = self.protein_embeddings.shape[1] + self.compound_embeddings.shape[1] + 1
-                self.model = ModelFactory.create_model('neural_network', self.config, input_dim=input_dim).to(self.device)
-                
-                # Load model weights
-                self.model.load_state_dict(torch.load(model_file, map_location=self.device))
-                self.model.eval()  # Set to evaluation mode
-                
-                logger.info(f"Loaded neural network model from {model_file}")
-            except Exception as e:
-                error_msg = f"Error loading neural network model: {str(e)}"
-                logger.error(error_msg)
-                logger.debug(traceback.format_exc())
-                raise ValueError(error_msg)
+            extension = '.pt'
         else:
-            # Load XGBoost model
-            model_file = self.config.final_model_file
-            if not os.path.exists(model_file):
-                error_msg = f"XGBoost model file not found: {model_file}"
-                logger.error(error_msg)
-                raise FileNotFoundError(error_msg)
-                
-            try:
-                self.model = ModelFactory.create_model('xgboost', self.config)
-                self.model.load(model_file)
-                logger.info(f"Loaded XGBoost model from {model_file}")
-                
-                # Load embeddings
-                self._load_embeddings()
-            except Exception as e:
-                error_msg = f"Error loading XGBoost model: {str(e)}"
-                logger.error(error_msg)
-                logger.debug(traceback.format_exc())
-                raise ValueError(error_msg)
+            extension = '.json'
+        
+        # Construct model file path with appropriate extension
+        transform_suffix = "log10" if self.config.use_log10_transform else "ln"
+        model_file_base = str(self.config.final_model_file).replace('.json', '').replace('.pt', '')
+        model_file = f"{model_file_base}_{self.model_type}{transform_suffix}{extension}"
+        
+        # Try alternative file paths if the main one doesn't exist
+        alternative_paths = [
+            model_file,
+            f"{model_file_base}_{transform_suffix}{extension}",
+            f"{model_file_base}{extension}"
+        ]
+        
+        model_file = None
+        for path in alternative_paths:
+            if os.path.exists(path):
+                model_file = path
+                break
+        
+        if model_file is None:
+            error_msg = f"Model file not found in any of the expected locations: {alternative_paths}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+        
+        # Load model based on type
+        try:
+            self.model = ModelFactory.create_model(self.model_type, self.config)
+            self.model.load(model_file)
+            logger.info(f"Loaded {self.model_type} model from {model_file}")
+            
+            # Load embeddings
+            self._load_embeddings()
+        except Exception as e:
+            error_msg = f"Error loading model: {str(e)}"
+            logger.error(error_msg)
+            logger.debug(traceback.format_exc())
+            raise ValueError(error_msg)
     
     def _load_embeddings(self) -> None:
         """Load protein and compound embeddings."""

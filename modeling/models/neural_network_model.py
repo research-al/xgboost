@@ -227,25 +227,29 @@ class NeuralNetTrainer:
             predictions = self.model(X_tensor).cpu().numpy()
             
         return predictions
+        
     def save(self, file_path: str) -> None:
-        """Save the model to disk.
-        
-        Args:
-            file_path: Path to save the model
-        """
+        """Save the model to disk."""
         if self.model is None:
-            logger.error("Cannot save: no model has been trained")
+            logger.error("Cannot save: no model trained")
             return
-            
-        # Make sure path exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
         
-        # Adjust file path to use .pt extension for PyTorch models
-        file_path = str(file_path).replace('.json', '.pt')
+        # Process file path first
+        file_path = str(file_path)
+        if file_path.endswith('.json'):
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            file_path = file_path.replace('.json', '.pt')
+        elif not file_path.endswith('.pt'):
+            file_path += '.pt'
         
-        # Save model state dict
+        # Get directory from FINAL path
+        dir_path = os.path.dirname(file_path)
+        if dir_path:  # ← Key check here
+            os.makedirs(dir_path, exist_ok=True)
+        
         torch.save(self.model.state_dict(), file_path)
-        logger.info(f"Neural network model saved to {file_path}")
+        logger.info(f"Model saved to {file_path}")
 
 
 # Add the BaseModel implementation for neural networks
@@ -342,26 +346,37 @@ class NeuralNetworkModel(BaseModel):
         return predictions
     
     def save(self, file_path: str) -> None:
-        """Save the model to disk.
-        
-        Args:
-            file_path: Path to save the model
-        """
+        """Save the model to disk."""
         if self.model is None:
             self.model = self.trainer.model
-            
+                
         if self.model is None:
             raise ValueError("No model to save. Train the model first.")
         
-        # Make sure directory exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        # Handle file extension logic first
+        file_path = str(file_path)
         
-        # Adjust file path to use .pt extension for PyTorch models
-        file_path = str(file_path).replace('.json', '.pt')
+        # If .json is requested, replace with .pt
+        if file_path.endswith('.json'):
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    logger.warning(f"Failed to remove .json file: {e}")
+            pt_file_path = file_path.replace('.json', '.pt')
+        else:
+            pt_file_path = file_path if file_path.endswith('.pt') else f"{file_path}.pt"
         
-        # Save model state dict
-        torch.save(self.model.state_dict(), file_path)
-        logger.info(f"Neural network model saved to {file_path}")
+        # Extract directory from FINAL processed path
+        dir_path = os.path.dirname(pt_file_path)
+        
+        # Only create directory if path contains one
+        if dir_path:  # ← Key fix: skip directory creation if path has no directory
+            os.makedirs(dir_path, exist_ok=True)
+        
+        # Save to processed path
+        torch.save(self.model.state_dict(), pt_file_path)
+        logger.info(f"Model saved to {pt_file_path}")
     
     def load(self, file_path: str) -> None:
         """Load the model from disk.
@@ -369,8 +384,14 @@ class NeuralNetworkModel(BaseModel):
         Args:
             file_path: Path to load the model from
         """
-        # Adjust file path to use .pt extension
-        file_path = str(file_path).replace('.json', '.pt')
+        # Ensure we're using a .pt file extension
+        file_path = str(file_path)
+        if file_path.endswith('.json'):
+            # If file path is .json, convert to .pt 
+            file_path = file_path.replace('.json', '.pt')
+        elif not file_path.endswith('.pt'):
+            # If no extension, add .pt
+            file_path += '.pt'
         
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Model file not found: {file_path}")

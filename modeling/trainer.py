@@ -223,20 +223,20 @@ class ModelTrainer:
         # Base name depends on model type and transformation
         transform_suffix = "log10" if self.config.use_log10_transform else "ln"
         model_prefix = "initial" if is_initial else "final"
-        model_suffix = f"{self.model_type}_{transform_suffix}"
         
         if hyperparams:
             return os.path.join(self.config.models_dir, f"best_params_{self.model_type}_{transform_suffix}.pkl")
-        else:
-            # Add appropriate extension based on model type
-            if self.model_type.lower() == 'xgboost':
-                extension = ".json"
-            elif self.model_type.lower() in ['neural_network', 'nn']:
-                extension = ".pt"
-            else:
-                extension = ""
-                
-        return os.path.join(self.config.models_dir, f"{model_prefix}_model_{model_suffix}{extension}")
+        
+        # Add model type to the file name
+        file_name = f"{model_prefix}_model_{self.model_type}_{transform_suffix}"
+        
+        # Add appropriate extension based on model type
+        if self.model_type.lower() in ['neural_network', 'nn']:
+            extension = ".pt"
+        else:  # xgboost or default
+            extension = ".json"
+        
+        return os.path.join(self.config.models_dir, f"{file_name}{extension}")
 
     
     def tune_hyperparameters(self) -> Dict[str, Any]:
