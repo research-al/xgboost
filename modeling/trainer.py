@@ -3,6 +3,7 @@
 import time
 import logging
 import numpy as np
+import pandas as pd
 import pickle
 import os
 from typing import Dict, Tuple, List, Optional, Union, Any
@@ -130,7 +131,136 @@ class ModelTrainer:
         logger.info(f"Training set: {self.X_train.shape[0]} samples")
         logger.info(f"Validation set: {self.X_val.shape[0]} samples")
         logger.info(f"Test set: {self.X_test.shape[0]} samples")
+
+
+
+    def split_data_with_tracking(self, X: np.ndarray, y: np.ndarray, 
+                       strata_array: Optional[np.ndarray] = None,
+                       feature_names: Optional[List[str]] = None,
+                       interactions_df: Optional[pd.DataFrame] = None) -> None:
+        """Split data into training, validation, and test sets with interaction tracking.
     
+    Args:
+        X: Feature matrix
+        y: Target vector
+        strata_array: Optional array of stratification labels
+        feature_names: Optional list of feature names
+        interactions_df: Original interactions DataFrame with pubchem_id, uniprot_id, kiba_score
+        """
+        logger.info("Splitting data into train, validation, and test sets...")
+        
+        # Store feature names if provided
+        self.feature_names = feature_names
+        
+        # Store the original interactions
+        self.interactions_df = interactions_df
+        
+        # Create indices array for tracking
+        indices = np.arange(len(y))
+        
+        # Use stratification if available and enabled
+        if strata_array is not None and self.config.use_stratification:
+            logger.info("Using stratified sampling")
+            
+            # First split: train+val vs test
+            X_train_val, self.X_test, y_train_val, self.y_test, strata_train_val, self.strata_test, idx_train_val, idx_test = train_test_split(
+                X, y, strata_array, indices,
+                test_size=self.config.test_size, 
+                random_state=self.config.random_state,
+                stratify=strata_array
+            )
+            
+            # Second split: train vs val
+            self.X_train, self.X_val, self.y_train, self.y_val, self.strata_train, self.strata_val, self.idx_train, self.idx_val = train_test_split(
+                X_train_val, y_train_val, strata_train_val, idx_train_val,
+                test_size=self.config.val_size,
+                random_state=self.config.random_state,
+                stratify=strata_train_val
+            )
+            
+            # Verify strata distribution
+            if logger.isEnabledFor(logging.DEBUG):
+                for split_name, strata in [
+                    ("Train", self.strata_train), 
+                    ("Validation", self.strata_val), 
+                    ("Test", self.strata_test)
+                ]:
+                    import pandas as pd
+                    strata_counts = pd.Series(strata).value_counts(normalize=True) * 100
+                    logger.debug(f"{split_name} set strata distribution (%):\n{strata_counts}")
+        else:
+            # Regular splitting without stratification
+            if strata_array is not None and not self.config.use_stratification:
+                logger.info("Stratification data available but not used (disabled in config)")
+            else:
+                logger.info("Using random sampling (no stratification data available)")
+            
+            # First split: train+val vs test
+            X_train_val, self.X_test, y_train_val, self.y_test, idx_train_val, idx_test = train_test_split(
+                X, y, indices,
+                test_size=self.config.test_size, 
+                random_state=self.config.random_state
+            )
+            
+            # Second split: train vs val
+            self.X_train, self.X_val, self.y_train, self.y_val, self.idx_train, self.idx_val = train_test_split(
+                X_train_val, y_train_val, idx_train_val,
+                test_size=self.config.val_size,
+                random_state=self.config.random_state
+            )
+            
+            self.strata_train = None
+            self.strata_val = None
+            self.strata_test = None
+        
+        # Store indices for tracking
+        self.idx_test = idx_test
+        
+        logger.info(f"Training set: {self.X_train.shape[0]} samples")
+        logger.info(f"Validation set: {self.X_val.shape[0]} samples")
+        logger.info(f"Test set: {self.X_test.shape[0]} samples")
+
+    def save_interaction_splits(self, base_path: str = None) -> None:
+        """Save the interactions split into train/val/test as CSV files.
+    
+        Args:
+        base_path: Base path for saving the CSV files.
+               If None, uses the data directory from the config.
+        """
+        if not hasattr(self, 'idx_train') or not hasattr(self, 'interactions_df'):
+            error_msg = "Interactions data not tracked during splitting. Use split_data_with_tracking() first."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        import os
+        import pandas as pd
+        
+        # Determine base path
+        if base_path is None:
+            base_path = self.config.data_dir
+        
+        # Create base directory if it doesn't exist
+        os.makedirs(base_path, exist_ok=True)
+        
+        # Get the split interactions dataframes
+        train_interactions = self.interactions_df.iloc[self.idx_train].copy()
+        val_interactions = self.interactions_df.iloc[self.idx_val].copy()
+        test_interactions = self.interactions_df.iloc[self.idx_test].copy()
+        
+        # Save to CSV
+        train_path = os.path.join(base_path, 'train_interactions.csv')
+        val_path = os.path.join(base_path, 'val_interactions.csv')
+        test_path = os.path.join(base_path, 'test_interactions.csv')
+        
+        train_interactions.to_csv(train_path, index=False)
+        val_interactions.to_csv(val_path, index=False)
+        test_interactions.to_csv(test_path, index=False)
+        
+        logger.info(f"Split interactions saved to CSV files:")
+        logger.info(f"  Training set ({len(train_interactions)} interactions): {train_path}")
+        logger.info(f"  Validation set ({len(val_interactions)} interactions): {val_path}")
+        logger.info(f"  Test set ({len(test_interactions)} interactions): {test_path}")
+        
     def _clean_data(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Clean data by removing NaN, Inf, and other problematic values.
         

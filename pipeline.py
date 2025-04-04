@@ -74,7 +74,7 @@ class KIBAModelPipeline:
         
         Args:
             interactions: DataFrame with filtered interaction data
-            
+                
         Returns:
             Tuple containing (X, y, strata_array)
         """
@@ -86,26 +86,44 @@ class KIBAModelPipeline:
         # Create feature matrix
         X, y, strata_array = self.feature_engineering.create_feature_matrix(interactions)
         
+        # Store the interactions DataFrame for later use in splitting
+        self.interactions_df = interactions
+        
         logger.info("=== Feature engineering pipeline completed ===")
         
         return X, y, strata_array
-    
+
     def run_modeling_pipeline(self, X: np.ndarray, y: np.ndarray, 
-                         strata_array: Optional[np.ndarray] = None) -> Union[xgb.Booster, torch.nn.Module]:
+                        strata_array: Optional[np.ndarray] = None, 
+                        save_split: bool = False) -> Union[xgb.Booster, torch.nn.Module]:
         """Run the modeling pipeline to train and evaluate models.
         
         Args:
             X: Feature matrix
             y: Target vector
             strata_array: Optional strata for stratified sampling
+            save_split: Whether to save the interactions split to CSV files
             
         Returns:
             Trained final model
         """
         logger.info("=== Running modeling pipeline ===")
         
-        # Split data
-        self.model_trainer.split_data(X, y, strata_array)
+        # Split data with interaction tracking
+        if hasattr(self, 'interactions_df'):
+            self.model_trainer.split_data_with_tracking(X, y, strata_array, interactions_df=self.interactions_df)
+        else:
+            logger.warning("No interaction data available for tracking during split")
+            self.model_trainer.split_data(X, y, strata_array)
+        
+        # Save interaction splits to CSV if requested
+        if save_split and hasattr(self.model_trainer, 'interactions_df'):
+            try:
+                self.model_trainer.save_interaction_splits()
+                logger.info("Train/validation/test interaction splits saved to CSV files")
+            except Exception as e:
+                logger.error(f"Failed to save interaction splits to CSV: {str(e)}")
+                logger.debug(traceback.format_exc())
         
         # Train initial model
         self.model_trainer.train_initial_model()
@@ -135,9 +153,12 @@ class KIBAModelPipeline:
         
         return final_model
     
-    def run_full_pipeline(self) -> Union[xgb.Booster, torch.nn.Module]:
+    def run_full_pipeline(self, save_split: bool = False) -> Union[xgb.Booster, torch.nn.Module]:
         """Run the full pipeline from raw data to trained model.
         
+        Args:
+            save_split: Whether to save the train/validation/test split to CSV files
+            
         Returns:
             Trained final model
         """
@@ -152,13 +173,13 @@ class KIBAModelPipeline:
             X, y, strata_array = self.run_feature_engineering_pipeline(valid_interactions)
             
             # Modeling
-            final_model = self.run_modeling_pipeline(X, y, strata_array)
+            final_model = self.run_modeling_pipeline(X, y, strata_array, save_split=save_split)
             
             total_time = time.time() - start_time
             logger.info(f"====== Pipeline completed successfully in {total_time:.2f}s ======")
             
             return final_model
-            
+                
         except Exception as e:
             logger.error(f"Pipeline failed: {str(e)}")
             logger.debug(traceback.format_exc())

@@ -59,6 +59,10 @@ def main():
     parser.add_argument('--uniprot-id', type=str, help='UniProt ID for prediction')
     parser.add_argument('--pubchem-id', type=str, help='PubChem CID for prediction')
     parser.add_argument('--is-experimental', action='store_true', help='Indicate if prediction is for experimental data')
+        # Add to the argument parser in main.py:
+    parser.add_argument('--save-split', action='store_true', 
+                    help='Save train/validation/test interaction splits to CSV files')
+
     
     args = parser.parse_args()
     
@@ -148,7 +152,7 @@ def main():
         else:
             # Run full pipeline
             start_time = time.time()
-            final_model = pipeline.run_full_pipeline()
+            final_model = pipeline.run_full_pipeline(save_split=args.save_split)
             total_time = time.time() - start_time
             logger.info(f"Pipeline completed in {total_time:.2f} seconds")
             
