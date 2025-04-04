@@ -14,6 +14,8 @@ from kiba_model.modeling.models.xgboost_model import XGBoostModel
 from kiba_model.modeling.models.neural_network_model import NeuralNetTrainer
 from sklearn.model_selection import train_test_split
 
+# Set up logging
+
 logger = logging.getLogger("kiba_model")
 
 class ModelTrainer:
